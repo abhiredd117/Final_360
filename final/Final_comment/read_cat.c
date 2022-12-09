@@ -24,7 +24,7 @@ int read_file() {
 }
 
 int myread(int fd, char *buf, int n_bytes) {
-    OFT *oftp = running->fd[fd];
+    OFT *oftp = running->fd[fd]; //open file table
     MINODE *mip = oftp->minodePtr;
     int count = 0, lbk, startByte, blk;
     int ibuf[BLKSIZE] = { 0 };
