@@ -14,10 +14,10 @@
 
 #include "type.h"
 
-SUPER *sp; 
-GD    *gp; 
-INODE *ip; 
-DIR   *dp; 
+SUPER *sp; //Contains all the blocks i.e. superblock
+GD    *gp; //Group descriptor, divides disk blocks into groups
+INODE *ip; //Contains file information, minode contains that and memory information.
+DIR   *dp; //Contains directory information
 
 extern MINODE *iget();
 
@@ -25,9 +25,9 @@ MINODE minode[NMINODE];
 MINODE *root;
 PROC   proc[NPROC], *running;
 
-char gpath[128]; 
-char *name[64];  
-int   n;         
+char gpath[128]; // global for tokenized components
+char *name[64];  // assume at most 64 components in pathname
+int   n;         // number of component strings
 
 int  fd, dev;
 int  nblocks, ninodes, bmap, imap, iblk;
@@ -61,9 +61,9 @@ int init()
   }
   for (i=0; i<NPROC; i++){
     p = &proc[i];
-    p->pid = i+1;           
-    p->uid = p->gid = 0;    
-    p->cwd = 0;             
+    p->pid = i+1;           // pid = 1, 2
+    p->uid = p->gid = 0;    // uid = 0: SUPER user
+    p->cwd = 0;             // CWD of process
 
     //No opened file yet
     for (j = 0; j < NFD; j++) {
@@ -73,6 +73,8 @@ int init()
   }
 }
 
+
+// load root INODE and set root pointer to it
 int mount_root()
 {  
   printf("mount_root()\n");
@@ -123,6 +125,8 @@ int main(int argc, char *argv[ ])
   running = &proc[0];
   running->cwd = iget(dev, 2);
   printf("root refCount = %d\n", root->refCount);
+
+  // WRTIE code here to create P1 as a USER process
   
   while(1){
     printf("input command : [ls|cd|pwd|mkdir|creat|rmdir|link|unlink|symlink|open|close|\nread|cat|write|cp|quit] ");

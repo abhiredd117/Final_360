@@ -1,131 +1,220 @@
-int mywrite(int fd, char buf[ ], int nbytes)
-{
+int mywrite(int fd, char* buffer, int byteCount){
+    //Get the OFT for the file we want too write too
     OFT *oftp = running->fd[fd];
+
+    //Get the memory inode from the open file
     MINODE *mip = oftp->minodePtr;
+
+    //Get the literal inode
     INODE *ip = &mip->INODE;
-    int count = 0, lblk, startByte, lbk, remain, doubleblk;
-    char ibuf[BLKSIZE] = { 0 }, doubly_ibuf[BLKSIZE] = { 0 };
-    char *cq = buf;
 
-    while (nbytes > 0 ){
+    //Buffers we store the integers for blocks in when reading from the blocks
+    char ibuf[BLKSIZE] = { 0 };
+    char dibuf[BLKSIZE] = { 0 };
 
-        //compute LOGICAL BLOCK (lbk) and the startByte in that lbk:
-        lbk       = oftp->offset / BLKSIZE;
-        startByte = oftp->offset % BLKSIZE;
+    //Starting point for copying the buffer
+    char *cq = buffer;
 
-        // I only show how to write DIRECT data blocks, you figure out how to
-        // write indirect and double-indirect blocks.
+    while (byteCount > 0){
+        printf("Bytes left: %d\n",byteCount);
 
-        if (lbk < 12){                         // direct block
-            if (ip->i_block[lbk] == 0){   // if no data block yet
+        //Find the location of the lblk based on offset
+        int lblk = oftp->offset / BLKSIZE;
 
-                mip->INODE.i_block[lbk] = balloc(mip->dev);// MUST ALLOCATE a block
-            }
-            lbk = mip->INODE.i_block[lbk];      // blk should be a disk block now
+        //Find where we are starting to write from
+        int startByte = oftp->offset % BLKSIZE;
+
+        //Create variable to store where we need to actually write too
+        int blk;
+
+        //Handle writing the direct blocks
+        if (lblk < 12){
+            //Make sure that we have somewhere to write too
+            if(ip->i_block[lblk] == 0)ip->i_block[lblk] = balloc(mip->dev);
+
+            //Set the blk up so we can write
+            blk = ip->i_block[lblk];
         }
-        else if (lbk >= 12 && lbk < 256 + 12){ // INDIRECT blocks
-            // HELP INFO:
-            if (ip->i_block[12] == 0){
-                //allocate a block for it;
-                //zero out the block on disk !!!!
-                int block_12 = ip->i_block[12] = balloc(mip->dev);
 
-                if (block_12 == 0)
-                    return 0;
+        //Handle writing the indirect blocks
+        if(lblk >= 12 && lblk < 268){
+            printf("Writing in single indirect now\n");
+            //Make sure we have a place to write too
+            if(ip->i_block[12] == 0){
+                //Allocate space
+                ip->i_block[12] = balloc(mip->dev);
 
+                //Confirm the space is there if not exit
+                printf("Checking for space\n");
+                if(ip->i_block[12] == 0)return 0;
+                printf("Created space single indriect\n");
+                //Get the block that we just allocated's information into a buffer
                 get_block(mip->dev, ip->i_block[12], ibuf);
+
+                //Go to each section in the list of blocks stored and set them to 0
                 int *ptr = (int *)ibuf;
-                for(int i = 0; i < (BLKSIZE / sizeof(int)); i++)
-                {
+
+                //Loop through the chunks and set them to null
+                for(int i = 0; i < (BLKSIZE / sizeof(int)); i++){
                     ptr[i] = 0;
                 }
 
+                //Write to disk
                 put_block(mip->dev, ip->i_block[12], ibuf);
+
+                //Increase the # of blocks
                 mip->INODE.i_blocks++;
             }
-            //get i_block[12] into an int ibuf[256];
-            int ibuf[BLKSIZE / sizeof(int)] = { 0 };
-            get_block(mip->dev, ip->i_block[12], (char *)ibuf);
 
-            lbk = ibuf[lbk - 12];
-            if (lbk==0){
-                //allocate a disk block;
-                //record it in i_block[12];
-                lbk = ibuf[lblk - 12] = balloc(mip->dev);
+            //This is where we store the indirect pointers to blocks
+            int indir_buf[BLKSIZE / sizeof(int)] = { 0 };
+
+            //Read the information in
+            get_block(mip->dev, ip->i_block[12], (char *)indir_buf);
+
+            //Set the block we are using. adjust by the offste of 12 since we discard the first 12 direct blocks
+            blk = indir_buf[lblk - 12];
+
+            //If the blk is not around
+            if(blk == 0){
+                //Allocate new block and set its location
+                indir_buf[lblk - 12] = balloc(mip->dev);
+
+                //Set up blk so we can use it
+                blk = indir_buf[lblk - 12];
+
+                //Increase the amount of blocks
                 ip->i_blocks++;
-                put_block(mip->dev, ip->i_block[12], (char *)ibuf);
+
+                //Write this update to the block on top
+                put_block(mip->dev, ip->i_block[12], (char *)indir_buf);
             }
         }
-        else{
-            // double indirect blocks */
+
+        //Handle writing the doubly indirect blocks
+        if(lblk >= 268){
+            printf("Writing in double indirect now\n");
+            //Adjust the lblk based on the the size of each chunk & the offset of the direct blocks
             lblk = lblk - (BLKSIZE/sizeof(int)) - 12;
-            //printf("%d\n", mip->INODE.i_block[13]);
-            if(mip->INODE.i_block[13] == 0)
-            {
-                int block_13 = ip->i_block[13] = balloc(mip->dev);
 
-                if (block_13 == 0)
-                    return 0;
+            //Make sure we have a block to write too
+            if(mip->INODE.i_block[13] == 0){
 
+                //Allocate block
+                ip->i_block[13] = balloc(mip->dev);
+
+                //Confirm the allocation worked
+                if (ip->i_block[13] == 0)return 0;
+
+                //Get the data in the block we just allocated
                 get_block(mip->dev, ip->i_block[13], ibuf);
                 int *ptr = (int *)ibuf;
+
+                //Make sure that all the blocks are null
                 for(int i = 0; i < (BLKSIZE / sizeof(int)); i++){
                     ptr[i] = 0;
                 }
+
+                //Write the updates to the block
                 put_block(mip->dev, ip->i_block[13], ibuf);
+
+                //Increase the amount of blocks
                 ip->i_blocks++;
             }
+
+            //This is where we have we have the first set of indirect's
             int doublebuf[BLKSIZE/sizeof(int)] = {0};
             get_block(mip->dev, ip->i_block[13], (char *)doublebuf);
-            doubleblk = doublebuf[lblk/(BLKSIZE / sizeof(int))];
 
+            //Determine the outside blk based on the blk passed in divided by the size of chunks
+            int doubleblk = doublebuf[lblk/(BLKSIZE / sizeof(int))];
+
+            //Make sure we have an outside blk
             if(doubleblk == 0){
-                doubleblk = doublebuf[lblk/(BLKSIZE / sizeof(int))] = balloc(mip->dev);
-                if (doubleblk == 0)
-                    return 0;
-                get_block(mip->dev, doubleblk, doubly_ibuf);
-                int *ptr = (int *)doubly_ibuf;
+                //Allocate a block
+                doublebuf[lblk/(BLKSIZE / sizeof(int))] = balloc(mip->dev);
+
+                //Store newly allocated block
+                doubleblk = doublebuf[lblk/(BLKSIZE / sizeof(int))];
+
+                //Confirm we successfully allocated the block
+                if (doubleblk == 0)return 0;
+
+                //Get the block for what we just allocated
+                get_block(mip->dev, doubleblk, dibuf);
+                int *ptr = (int *)dibuf;
+
+                //Set all of the chunks to null
                 for(int i = 0; i < (BLKSIZE / sizeof(int)); i++){
                     ptr[i] = 0;
                 }
-                put_block(mip->dev, doubleblk, doubly_ibuf);
+
+                //Write the updates to the inside blk
+                put_block(mip->dev, doubleblk, dibuf);
+
+                //Increase amount of blocks
                 ip->i_blocks++;
+
+                //Write the changes to the outside blk
                 put_block(mip->dev, mip->INODE.i_block[13], (char *)doublebuf);
             }
 
+            //Set the entire section of blks we are looking @ to 0
             memset(doublebuf, 0, BLKSIZE / sizeof(int));
+
+            //Get the lowest most set of blocks
             get_block(mip->dev, doubleblk, (char *)doublebuf);
+
+            //Make sure the lowest block is available
             if (doublebuf[lblk % (BLKSIZE / sizeof(int))] == 0) {
-                lbk = doublebuf[lblk % (BLKSIZE / sizeof(int))] = balloc(mip->dev);
-                if (lbk == 0)
-                    return 0;
+                //Allocate the lowest block
+                doublebuf[lblk % (BLKSIZE / sizeof(int))] = balloc(mip->dev);
+
+                //Assign the blk and use modulous to find the correct blk
+                blk = doublebuf[lblk % (BLKSIZE / sizeof(int))];
+
+                //Confirm we successfully allocated
+                if (blk == 0)return 0;
+
+                //Increase amount of blocks
                 ip->i_blocks++;
+
+                //Write the updates to blk
                 put_block(mip->dev, doubleblk, (char *)doublebuf);
             }
         }
 
-        /* all cases come to here : write to the data block */
-        char wbuf[BLKSIZE] = { 0 };
-        get_block(mip->dev, lbk, wbuf);   // read disk block into wbuf[ ]
-        char *cp = wbuf + startByte;      // cp points at startByte in wbuf[]
-        remain = BLKSIZE - startByte;     // number of BYTEs remain in this block
+        //Create buffer & read in the blk we are looking at to write too
+        char buf[BLKSIZE] = {0 };
+        get_block(mip->dev, blk, buf);
 
-        while (remain > 0){               // write as much as remain allows
-            *cp++ = *cq++;              // cq points at buf[ ]
-            nbytes--; remain--;         // dec counts
-            oftp->offset++;             // advance offset
-            if (oftp->offset > mip->INODE.i_size)  // especially for RW|APPEND mode
-                mip->INODE.i_size++;    // inc file size (if offset > fileSize)
-            if (nbytes <= 0) break;     // if already nbytes, break
-        }
-        put_block(mip->dev, lbk, wbuf);   // write wbuf[ ] to disk
+        printf("We are writing to blk %d\n",blk);
 
-        // loop back to outer while to write more .... until nbytes are written
+        //Store the current position & how many blocks are remaining
+        char *cp = buf + startByte;
+        int remainder = BLKSIZE - startByte;
+
+        //How much we need to adjust by
+        int amt = remainder <= byteCount ? remainder : byteCount;
+
+        //Adjust the info for the next loop
+        memcpy(cp,cq, amt);
+        cq += amt;
+        oftp->offset += amt;
+        byteCount -= amt;
+
+        //if the file offset is greater than the size of the INODE swap the sizes
+        if(oftp->offset > mip->INODE.i_size)mip->INODE.i_size = oftp->offset;
+
+        //Write to disk
+        put_block(mip->dev, blk, buf);
     }
 
-    mip->dirty = 1;       // mark mip dirty for iput()
-    printf("wrote %d char into file descriptor fd=%d\n", nbytes, fd);
-    return nbytes;
+    //Mark as dirty
+    mip->dirty = 1;
+
+    //Bytes written
+    return byteCount;
 }
 
 int write_file(int fd, char *buf)
@@ -150,29 +239,42 @@ int write_file(int fd, char *buf)
 
     return mywrite(fd, buf, nbytes);
 }
-
+//cpoies from one file to another 
 int mycp(char *src, char *dest){
     int n = 0;
     char mybuf[BLKSIZE] = {0};
+    //Open the two files
     int fdsrc = open_file(src, READ);
+    //creat the destination file 
     mycreat(dest);
+    //open it up for read&write 
     int fddest = open_file(dest, READ_WRITE);
 
+    //print out the file disrupters are valid
     printf("fdsrc %d\n", fdsrc);
     printf("fddest %d\n", fddest);
 
+    //check if the file discripters are valid 
+    //Make sure we got two files back
     if (fdsrc == -1 || fddest == -1) {
+
         if (fddest == -1) close_file(fddest);
         if (fdsrc == -1) close_file(fdsrc);
         return -1;
     }
 
+    //Make sure we are full of \0's
     memset(mybuf, '\0', BLKSIZE);
+
+    //Loop while we can read
     while ( n = myread(fdsrc, mybuf, BLKSIZE)){
         mybuf[n] = 0;
+        //Write
         mywrite(fddest, mybuf, n);
+        //Reset the buffer
         memset(mybuf, '\0', BLKSIZE);
     }
+    //Close the files & return
     close_file(fdsrc);
     close_file(fddest);
     return 0;
